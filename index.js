@@ -35,7 +35,6 @@ function iframePage(embedUrl) {
     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
     referrerpolicy="no-referrer"
     scrolling="no"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-popups-to-escape-sandbox allow-presentation"
   ></iframe>
 </body>
 </html>`;
