@@ -2,184 +2,91 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const https = require('https');
-const http = require('http');
-const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TARGET = process.env.TARGET_URL || 'https://vidfast.vc';
+const TARGET = (process.env.TARGET_URL || 'https://vidfast.vc').replace(/\/$/, '');
 
-// Browser-like User-Agent
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+app.use(cors({ origin: '*' }));
 
-// Enable CORS for all origins
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    methods: ['GET', 'HEAD', 'OPTIONS'],
-    allowedHeaders: ['*'],
-    exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges', 'Content-Type'],
-    credentials: false,
-  })
-);
+// ─── HTML iframe wrapper ───────────────────────────────────────────────────────
+function iframePage(embedUrl) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Player</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+    iframe {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <iframe
+    src="${embedUrl}"
+    allowfullscreen
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    referrerpolicy="no-referrer"
+    scrolling="no"
+  ></iframe>
+</body>
+</html>`;
+}
 
-// Pre-flight OPTIONS handled by cors() above, but be explicit
-app.options('*', cors());
-
-// ─── Health check ─────────────────────────────────────────────────────────────
+// ─── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', proxy_target: TARGET, public_url: PUBLIC_URL });
+  res.json({ status: 'ok', target: TARGET });
 });
 
-// ─── Generic URL proxy  (/proxy?url=https://...) ──────────────────────────────
-// Handles HLS master manifests, variant playlists, .ts segments, and .key files.
-// All URLs inside m3u8 files are rewritten to also route through this endpoint.
-app.use('/proxy', (req, res) => {
-  const targetUrl = req.query.url;
-
-  if (!targetUrl) {
-    return res.status(400).json({ error: 'Missing ?url= query parameter' });
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(targetUrl);
-  } catch {
-    return res.status(400).json({ error: 'Invalid URL' });
-  }
-
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    return res.status(400).json({ error: 'Only http/https URLs are allowed' });
-  }
-
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range, Origin, Accept, Referer');
-    return res.sendStatus(204);
-  }
-
-  console.log(`[PROXY] ${req.method} ${targetUrl}`);
-
-  const transport = parsed.protocol === 'https:' ? https : http;
-
-  // Forward Range header if present (needed for seeking)
-  const extraHeaders = {};
-  if (req.headers['range']) {
-    extraHeaders['Range'] = req.headers['range'];
-  }
-
-  const options = {
-    hostname: parsed.hostname,
-    port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-    path: parsed.pathname + parsed.search,
-    method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-    headers: {
-      'User-Agent': BROWSER_UA,
-      // Always spoof referer as vidfast.vc — that's what the CDN validates
-      Referer: 'https://vidfast.vc/',
-      Origin: 'https://vidfast.vc',
-      Accept: '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'identity',
-      Connection: 'keep-alive',
-      ...extraHeaders,
-    },
-  };
-
-  const proxyReq = transport.request(options, (proxyRes) => {
-    const statusCode = proxyRes.statusCode || 502;
-    console.log(`[PROXY] ${statusCode} <- ${targetUrl}`);
-
-    res.status(statusCode);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
-
-    // Forward useful response headers
-    const forwardHeaders = [
-      'content-type',
-      'content-length',
-      'content-range',
-      'accept-ranges',
-      'cache-control',
-      'expires',
-      'last-modified',
-      'etag',
-    ];
-    for (const h of forwardHeaders) {
-      if (proxyRes.headers[h]) res.setHeader(h, proxyRes.headers[h]);
-    }
-
-    // HEAD request — no body
-    if (req.method === 'HEAD') {
-      return res.end();
-    }
-
-    const contentType = (proxyRes.headers['content-type'] || '').toLowerCase();
-    const isM3u8 =
-      contentType.includes('mpegurl') ||
-      contentType.includes('x-mpegurl') ||
-      targetUrl.includes('.m3u8');
-
-    if (isM3u8) {
-      // Stream the manifest back as-is — the player handles fetching
-      // segments and keys directly, so no URL rewriting is needed.
-      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
-      res.removeHeader('content-length');
-      proxyRes.pipe(res);
-    } else {
-      // Binary — pipe directly (.ts segments, .key files, etc.)
-      proxyRes.pipe(res);
-    }
-  });
-
-  proxyReq.on('error', (err) => {
-    console.error(`[PROXY ERROR] ${err.message}`);
-    if (!res.headersSent) {
-      res.status(502).json({ error: 'Upstream request failed', message: err.message });
-    }
-  });
-
-  proxyReq.end();
+// ─── Movie route ───────────────────────────────────────────────────────────────
+// GET /movie/:tmdb_id
+// Embeds: https://vidfast.vc/movie/:tmdb_id
+app.get('/movie/:tmdb_id', (req, res) => {
+  const { tmdb_id } = req.params;
+  const embedUrl = `${TARGET}/movie/${tmdb_id}`;
+  console.log(`[MOVIE] ${embedUrl}`);
+  res.setHeader('Content-Type', 'text/html');
+  // Allow this page itself to be iframed from anywhere
+  res.setHeader('X-Frame-Options', 'ALLOWALL');
+  res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  res.send(iframePage(embedUrl));
 });
 
-// ─── Main target proxy  (everything else → vidfast.vc) ────────────────────────
-app.use(
-  '/',
-  createProxyMiddleware({
-    target: TARGET,
-    changeOrigin: true,
-    on: {
-      proxyReq: (proxyReq, req) => {
-        proxyReq.setHeader('Referer', TARGET + '/');
-        proxyReq.setHeader('Origin', TARGET);
-        proxyReq.setHeader('User-Agent', BROWSER_UA);
-        console.log(`[MAIN] ${req.method} ${req.url} -> ${TARGET}${req.url}`);
-      },
-      proxyRes: (proxyRes, req) => {
-        proxyRes.headers['access-control-allow-origin'] = '*';
-        delete proxyRes.headers['x-frame-options'];
-        delete proxyRes.headers['content-security-policy'];
-        console.log(`[MAIN] ${proxyRes.statusCode} <- ${req.url}`);
-      },
-      error: (err, req, res) => {
-        console.error(`[MAIN ERROR] ${err.message}`);
-        res.status(502).json({ error: 'Proxy error', message: err.message });
-      },
-    },
-  })
-);
+// ─── TV route ──────────────────────────────────────────────────────────────────
+// GET /tv/:tmdb_id/:season/:episode
+// Embeds: https://vidfast.vc/tv/:tmdb_id/:season/:episode
+app.get('/tv/:tmdb_id/:season/:episode', (req, res) => {
+  const { tmdb_id, season, episode } = req.params;
+  const embedUrl = `${TARGET}/tv/${tmdb_id}/${season}/${episode}`;
+  console.log(`[TV] ${embedUrl}`);
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('X-Frame-Options', 'ALLOWALL');
+  res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  res.send(iframePage(embedUrl));
+});
+
+// ─── 404 ───────────────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found', usage: [
+    'GET /movie/:tmdb_id',
+    'GET /tv/:tmdb_id/:season/:episode',
+  ]});
+});
 
 app.listen(PORT, () => {
-  console.log(`\nProxy server running on port ${PORT}`);
-  console.log(`Main target : ${TARGET}`);
-  console.log(`\nURL proxy usage:`);
-  console.log(`  http://localhost:${PORT}/proxy?url=<encoded-url>`);
-  console.log(`\nTest m3u8:`);
-  const testUrl = 'https://moon.peakstorm.top/vd/R1pYUjUyeXVESEs2VHp3ajdtSlVJZzpFLWU5YTIzWEszV2gxcEJGcXBURXpJRDdyc245TkROTk4zekFTc3JnR0sw/master.m3u8';
-  console.log(`  http://localhost:${PORT}/proxy?url=${encodeURIComponent(testUrl)}\n`);
+  console.log(`\niframe wrapper running on http://localhost:${PORT}`);
+  console.log(`Target : ${TARGET}`);
+  console.log(`\nRoutes:`);
+  console.log(`  http://localhost:${PORT}/movie/:tmdb_id`);
+  console.log(`  http://localhost:${PORT}/tv/:tmdb_id/:season/:episode`);
+  console.log(`\nExamples:`);
+  console.log(`  http://localhost:${PORT}/movie/1265609`);
+  console.log(`  http://localhost:${PORT}/tv/1265609/1/1\n`);
 });
