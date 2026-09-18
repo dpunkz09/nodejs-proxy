@@ -5,11 +5,11 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TARGET = (process.env.TARGET_URL || 'https://mapple.fun').replace(/\/$/, '');
+const TARGET = (process.env.TARGET_URL || 'https://vidsrc.ru').replace(/\/$/, '');
 
 app.use(cors({ origin: '*' }));
 
-// ─── HTML iframe wrapper ───────────────────────────────────────────────────────
+// â”€â”€â”€ HTML iframe wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function iframePage(embedUrl) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -40,15 +40,15 @@ function iframePage(embedUrl) {
 </html>`;
 }
 
-// ─── Health check ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Health check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', target: TARGET });
 });
 
-// ─── Movie route ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Movie route â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // GET /movie/:tmdb_id
 // Embeds: https://vidfast.vc/movie/:tmdb_id
-app.get('/watch/movie/:tmdb_id', (req, res) => {
+app.get('/movie/:tmdb_id', (req, res) => {
   const { tmdb_id } = req.params;
   const embedUrl = `${TARGET}/movie/${tmdb_id}`;
   console.log(`[MOVIE] ${embedUrl}`);
@@ -59,10 +59,10 @@ app.get('/watch/movie/:tmdb_id', (req, res) => {
   res.send(iframePage(embedUrl));
 });
 
-// ─── TV route ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ TV route â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // GET /tv/:tmdb_id/:season/:episode
 // Embeds: https://vidfast.vc/tv/:tmdb_id/:season/:episode
-app.get('/watch/tv/:tmdb_id/:season/:episode', (req, res) => {
+app.get('/tv/:tmdb_id/:season/:episode', (req, res) => {
   const { tmdb_id, season, episode } = req.params;
   const embedUrl = `${TARGET}/tv/${tmdb_id}/${season}/${episode}`;
   console.log(`[TV] ${embedUrl}`);
@@ -72,11 +72,11 @@ app.get('/watch/tv/:tmdb_id/:season/:episode', (req, res) => {
   res.send(iframePage(embedUrl));
 });
 
-// ─── 404 ───────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ 404 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found', usage: [
-    'GET /watch/movie/:tmdb_id',
-    'GET /watch/tv/:tmdb_id/:season/:episode',
+    'GET /movie/:tmdb_id',
+    'GET /tv/:tmdb_id/:season/:episode',
   ]});
 });
 
@@ -84,9 +84,9 @@ app.listen(PORT, () => {
   console.log(`\niframe wrapper running on http://localhost:${PORT}`);
   console.log(`Target : ${TARGET}`);
   console.log(`\nRoutes:`);
-  console.log(`  http://localhost:${PORT}/watch/movie/:tmdb_id`);
-  console.log(`  http://localhost:${PORT}/watch/tv/:tmdb_id/:season/:episode`);
+  console.log(`  http://localhost:${PORT}/movie/:tmdb_id`);
+  console.log(`  http://localhost:${PORT}/tv/:tmdb_id/:season/:episode`);
   console.log(`\nExamples:`);
-  console.log(`  http://localhost:${PORT}/watch/movie/1265609`);
-  console.log(`  http://localhost:${PORT}/watch/tv/1265609/1/1\n`);
+  console.log(`  http://localhost:${PORT}/movie/1265609`);
+  console.log(`  http://localhost:${PORT}/tv/1265609/1/1\n`);
 });
