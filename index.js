@@ -29,12 +29,19 @@ function wrapperPage(embedUrl, title) {
   </style>
 
   <!--
-    Pop-under blocker:
-    window.open is mocked HERE (on the wrapper page) so when the iframe's
-    scripts call window.open (which bubbles to the nearest non-sandboxed
-    ancestor), it hits our mock and silently returns a fake window object.
-    The iframe itself is NOT sandboxed, so the player never detects a
-    restricted environment.
+    Pop-under blocker + iframe-detection neutralizer.
+    This runs on the wrapper page (watch.flixworld.xyz).
+
+    The OUTER iframe (flixworld.xyz → this wrapper) has sandbox="allow-scripts
+    allow-same-origin ..." which blocks window.open and top-navigation at the
+    browser level — no popups can escape to flixworld.xyz.
+
+    The INNER iframe (this wrapper → vidfast.vc) has NO sandbox, so the player
+    cannot detect a sandboxed environment.
+
+    Additionally we mock window.open and spoof window.top/parent/self here so
+    that vidfast.vc (nested one level deeper) sees this wrapper as the top
+    window, passing most iframe-detection checks.
   -->
   <script>
     (function () {
@@ -47,18 +54,33 @@ function wrapperPage(embedUrl, title) {
         addEventListener: _noop, removeEventListener: _noop,
       };
 
-      // Override on this window — iframe pop-unders call window.open on
-      // their top-most accessible ancestor, which is this wrapper page.
-      window.open = function (url, target, features) {
-        console.debug('[blocked popup]', url);
+      // Swallow window.open — belt-and-suspenders alongside the outer sandbox
+      window.open = function (url) {
+        console.debug('[wrapper] blocked popup:', url);
         return _fakeWin;
       };
 
-      // Also block via CSP-style: prevent the iframe from navigating the top
-      window.addEventListener('beforeunload', function (e) {
-        e.preventDefault();
-        e.returnValue = '';
-      });
+      // Make this wrapper window look like the top-level window so that
+      // vidfast.vc's own iframe-detection (window.top !== window.self) passes
+      try { Object.defineProperty(window, 'top',         { get: function () { return window; }, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(window, 'parent',      { get: function () { return window; }, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(window, 'self',        { get: function () { return window; }, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(window, 'frameElement',{ get: function () { return null;   }, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(document, 'referrer',  { get: function () { return '';     }, configurable: true }); } catch (e) {}
+
+      // Re-stamp window.open after any dynamically injected script tag
+      new MutationObserver(function (mutations) {
+        mutations.forEach(function (m) {
+          m.addedNodes.forEach(function (n) {
+            if (n.nodeName === 'SCRIPT') {
+              window.open = function (url) {
+                console.debug('[wrapper/dynamic] blocked popup:', url);
+                return _fakeWin;
+              };
+            }
+          });
+        });
+      }).observe(document.documentElement, { childList: true, subtree: true });
     })();
   </script>
 </head>
